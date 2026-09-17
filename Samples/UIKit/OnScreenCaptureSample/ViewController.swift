@@ -15,7 +15,7 @@ class ViewController: UIViewController {
 
 		let page = UIStackView(arrangedSubviews: [
 			title("Screenshot me."),
-			caption("Take a screenshot, then compare it with what you see now.", style: .body),
+			caption("UIKit. Take a screenshot, then compare it with what you see now.", style: .body),
 			secret("Card number", "4929 8823 1147 0021"),
 			secret("One-time code", "704 118"),
 			subclassCard()

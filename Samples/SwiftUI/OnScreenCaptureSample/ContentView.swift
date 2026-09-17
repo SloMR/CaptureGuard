@@ -16,7 +16,7 @@ struct ContentView: View {
 			Text("Screenshot me.")
 				.font(.largeTitle.weight(.semibold))
 
-			Text("Take a screenshot, then compare it with what you see now.")
+			Text("SwiftUI. Take a screenshot, then compare it with what you see now.")
 				.foregroundStyle(.secondary)
 
 			secret("Card number", "4929 8823 1147 0021")
