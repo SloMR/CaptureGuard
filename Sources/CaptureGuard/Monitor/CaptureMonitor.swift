@@ -4,6 +4,7 @@
 
 import UIKit
 import Combine
+import GameController
 
 /// Reports whether the screen is being captured right now.
 @MainActor
@@ -16,10 +17,8 @@ public final class CaptureMonitor: ObservableObject {
 	/// True while protected views are hidden: a capture, or the app not being active.
 	@Published public private(set) var isHidingContent: Bool = false
 
-	/// Best-effort guess at an iPhone Mirroring session. On by default: iOS does not
-	/// report mirroring as a capture, so without it mirrored content is not protected
-	/// at all. It is inferred from undocumented behaviour and may stop working on any
-	/// iOS release. Set `false` to opt out.
+	/// Whether to guess at iPhone Mirroring. On by default, because iOS never reports
+	/// mirroring as a capture. The guess is undocumented and may break on an iOS release.
 	public var detectsMirroring: Bool = true {
 		didSet {
 			if !detectsMirroring { hasSeenMirroring = false }
@@ -42,7 +41,9 @@ public final class CaptureMonitor: ObservableObject {
 			UIApplication.didBecomeActiveNotification,
 			UIApplication.willResignActiveNotification,
 			UIApplication.willEnterForegroundNotification,
-			UIApplication.didEnterBackgroundNotification
+			UIApplication.didEnterBackgroundNotification,
+			.GCMouseDidConnect,
+			.GCMouseDidDisconnect
 		]
 		observers = names.map { name in
 			NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -108,13 +109,25 @@ public final class CaptureMonitor: ObservableObject {
 		screens.contains { $0.isCaptured }
 	}
 
+	/// Vendor name of the virtual mouse iOS makes for a mirroring session. Undocumented.
+	private let mirroringMouseName = "iPhone Mirroring"
+
 	private func looksLikeMirroring() -> Bool {
 		#if targetEnvironment(simulator)
 		return false
 		#else
 		guard isActive else { return false }
-		if let isDisplayOn = displayStatus?.state { return isDisplayOn == 0 }
-		return activeScreen.brightness <= 0.001
+
+		// Mirroring gives the phone the Mac's pointer as a virtual mouse that says so.
+		if GCMouse.mice().contains(where: { $0.vendorName?.contains(mirroringMouseName) == true }) {
+			return true
+		}
+
+		// Or the panel being dark while the app is in front.
+		if let isDisplayOn = displayStatus?.state, isDisplayOn == 0 { return true }
+
+		if displayStatus == nil { return activeScreen.brightness <= 0.001 }
+		return false
 		#endif
 	}
 

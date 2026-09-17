@@ -22,5 +22,5 @@ Pod::Spec.new do |s|
   s.source_files        = 'Sources/CNotify/**/*.{c,h}', 'Sources/CaptureGuard/**/*.swift'
   s.public_header_files = 'Sources/CNotify/include/*.h'
 
-  s.frameworks = 'UIKit', 'SwiftUI', 'Combine', 'QuartzCore'
+  s.frameworks = 'UIKit', 'SwiftUI', 'Combine', 'QuartzCore', 'GameController'
 end
