@@ -9,7 +9,7 @@ Check out the [full article for a detailed explanation](https://sidorov.tech/en/
 The authors of this package take **no responsibility** for any issues or consequences arising from its use. The code is provided **as-is**, and there is no guarantee that it will function as intended, especially with future updates to iOS.
 
 **Important Notes:**
-- The **SwiftUI** implementation is believed to be relatively safe for App Store submission. It uses public API, plus one undocumented notification name for iPhone Mirroring detection. Care should be taken with each iOS update to ensure that nothing breaks.
+- The **SwiftUI** implementation is believed to be relatively safe for App Store submission. It uses public API, plus two undocumented names for iPhone Mirroring detection — a notification name and a device name. Care should be taken with each iOS update to ensure that nothing breaks.
 - The **UIKit** implementation (`CaptureGuardUIKit`) utilizes certain private framework symbols, which may lead to rejection from the App Store. It is recommended to use this package as a reference and consider enforcing similar functionality via alternative approaches.
 
 **Compatibility**
@@ -17,7 +17,7 @@ The authors of this package take **no responsibility** for any issues or consequ
 - Swift 5.9+
 - iOS 15+
 - SwiftUI / UIKit
-- Screenshots are **not** protected in the iOS Simulator, so test that on a real device. Hiding while the app is inactive or being recorded does work there.
+- Screenshots and recordings are **not** protected in the iOS Simulator, so test those on a real device. Hiding while the app is inactive does work there.
 
 ## What it covers
 
@@ -27,8 +27,8 @@ The authors of this package take **no responsibility** for any issues or consequ
 | Screen recording | ✅ | layer exclusion + capture monitor |
 | AirPlay mirroring | ✅ | capture monitor |
 | Screen recording started on a Mac | ✅ | capture monitor |
-| iPhone Mirroring | ⚠️ | best-effort guess — see [docs/how-it-works.md](docs/how-it-works.md#iphone-mirroring) |
-| iOS Simulator | partly | the layer exclusion is inert; the capture monitor still works |
+| iPhone Mirroring | ⚠️ | inferred, not reported — see [docs/how-it-works.md](docs/how-it-works.md#iphone-mirroring) |
+| iOS Simulator | partly | the layer mark and `isCaptured` are inert; hiding while inactive still works |
 
 ## Installation
 
@@ -93,7 +93,7 @@ import CaptureGuardUIKit
 let box = HiddenOnCaptureView()
 ```
 
-The mark applies to one layer only. It does not pass down to subviews. So call it on the view that holds the secret, not on a parent far above it.
+The mark is set on this view's layer only, but a capture leaves out that layer and everything drawn inside it — so calling it on a container protects the container's contents too.
 
 ## Reading the capture state yourself
 
@@ -109,7 +109,7 @@ still on screen when iOS snapshots the app for the switcher.
 
 Protected views are also hidden while the app is not active, so the secret stays out of the app switcher snapshot. `isCapturing` reports captures only, and stays `false` in that case.
 
-`CaptureMonitor` sets `alpha` on every view you pass to `makeHiddenOnCapture()`. It uses `alpha` rather than `isHidden` so it does not collapse stack-view layouts or fight your own `isHidden`. Do not animate `alpha` on those views yourself.
+`CaptureMonitor` sets `alpha` to 0 on every view you pass to `makeHiddenOnCapture()`, and puts the previous value back afterwards. It uses `alpha` rather than `isHidden` so it does not collapse stack-view layouts or fight your own `isHidden`. Do not animate `alpha` on those views yourself.
 
 ## Layout
 

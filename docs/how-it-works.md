@@ -31,8 +31,8 @@ flowchart TD
     M2 --> R2["screen recording · AirPlay<br/>Mac-side recording · iPhone Mirroring"]
 ```
 
-`CaptureMonitor` keeps the views in an `NSHashTable<UIView>.weakObjects()`. When
-`isCapturing` changes, it sets `alpha` on each one.
+`CaptureMonitor` keeps the views in an `NSMapTable`, weakly, each with the alpha it had.
+When hiding starts it sets `alpha` to 0 on each one; when it ends it puts the old value back.
 
 ## 1. The layer exclusion
 
@@ -71,8 +71,9 @@ Four things to know:
 
 - Calling it more than once is safe.
 - It survives a frame change and `removeFromSuperview()`.
-- Sublayers do **not** get the mark. Only the layer you call it on. So call it on the view
-  that holds the secret, not on a parent far above it.
+- Only the layer you call it on gets the mark — a sublayer reads `0`. A capture still
+  leaves out that layer and everything drawn inside it, so a container protects its
+  contents.
 - The Simulator sets the mark and then ignores it.
 
 ## The mask
@@ -123,13 +124,17 @@ While the app is in front, `hasSeenMirroring` only goes one way:
 stateDiagram-v2
     direction LR
     [*] --> NotSeen
-    NotSeen --> Seen: applicationState == .active && displayStatus == 0
+    NotSeen --> Seen: app active && (mirroring mouse || displayStatus == 0)
     Seen --> NotSeen: UIApplication.didEnterBackgroundNotification
     note right of Seen
         hasSeenMirroring == true
-        isCapturing stays true even if displayStatus goes back to 1
+        isCapturing stays true even if the signal goes away
     end note
 ```
+
+The mirroring mouse is the strong one. A session gives the phone the Mac's pointer as a
+virtual `GCMouse`, and iOS names it after the feature — so the phone is told outright what
+is happening. It is there from the moment the session starts, before anyone clicks.
 
 `displayStatus` is the `com.apple.iokit.hid.displayStatus` notification, read with
 `notify_get_state`. `0` means the phone's own screen is off. An app is only in front with
@@ -177,11 +182,15 @@ iPhone 13 Pro, iOS 26.5.2, while mirroring was running:
 | `UIScreen.isCaptured` | `false` | no |
 | `UITraitCollection.sceneCaptureState` | `.inactive` | no |
 | `UIApplication.applicationState` | `.active` | half — see below |
+| `GCMouse` vendor name | `"V-iPhone Mirroring Mouse"` | **yes** |
 | `com.apple.iokit.hid.displayStatus` | `0` screen off, `1` after waking it | **yes** |
+| `UITouch.type` | `.indirectPointer` for a Mac click, `.direct` for a finger | partly |
 | `UIScreen.brightness` | `0.0`, but `1.0` when locked at full brightness | no |
 | `com.apple.springboard.lockstate` | `1` in one session, `0` in another | no |
+| `GCKeyboard` vendor name | `"Generic Keyboard"` — same as a real one | no |
+| `AVAudioSession` output route | `Speaker` either way | no |
 
-### Two signals that did not work
+### Signals that did not work
 
 - **`UIScreen.brightness == 0`.** This returns the user's brightness setting, not whether
   the screen is on. Lock the phone at full brightness and it still reads `1.0`, so the
@@ -189,18 +198,34 @@ iPhone 13 Pro, iOS 26.5.2, while mirroring was running:
 - **`com.apple.springboard.lockstate == 1`.** It reads fine (`notify_get_state` returns
   `0` for OK), but it said `1` in one mirroring session and `0` in another. A signal that
   changes inside one session is worse than no signal.
+- **`GCKeyboard.coalesced != nil`.** Mirroring does forward the Mac's keyboard, and this
+  caught sessions the screen check missed. But it cannot tell that keyboard from a real
+  one: both report the vendor name `Generic Keyboard`. Anyone with a Bluetooth keyboard
+  paired to their phone had content hidden the whole time.
+- **The audio route.** Mirroring plays the phone's audio on the Mac, but the phone still
+  reports `Speaker` either way.
 
 ### What it uses instead
 
 ```swift
-guard UIApplication.shared.applicationState == .active else { return false }
-if let isDisplayOn = displayStatus?.state { return isDisplayOn == 0 }
-return (activeScreen?.brightness ?? 1) <= 0.001   // fallback only
+guard isActive else { return false }
+
+// iOS names this device after the feature.
+if GCMouse.mice().contains(where: { $0.vendorName?.contains("iPhone Mirroring") == true }) {
+    return true
+}
+if let isDisplayOn = displayStatus?.state, isDisplayOn == 0 { return true }
+if displayStatus == nil { return activeScreen.brightness <= 0.001 }   // fallback only
+return false
 ```
 
+`GCMouse` is public API from GameController, and the mouse exists for the whole session, so
+this one holds while the phone's own screen is awake — which the screen check cannot do. The
+vendor *name* is not documented, and that is the risky part.
+
 `displayStatus` comes from the Darwin notification API in `<notify.h>`, reached through the
-`CNotify` target. `notify_get_state` is public. The *name* is not documented, and that is
-the risky part.
+`CNotify` target. `notify_get_state` is public. Its *name* is not documented either. It stays
+as a second signal in case the first one changes.
 
 The guess is off in the Simulator. There is no real screen there, so the notification is
 never posted and its state stays `0` — which would look like a mirroring session that
@@ -217,8 +242,9 @@ five:
 2. Press the power button during the session, without unlocking → it stays hidden.
 3. Set brightness to full, lock the phone, then mirror → it hides.
 4. Unlock the phone to end the session → the content comes back.
-5. Lock and unlock the phone with no mirroring → the content comes back. This is the
-   false-positive check.
+5. Lock and unlock the phone with no mirroring → the content comes back.
+6. Pair a Bluetooth keyboard or mouse to the phone, with no mirroring → the content stays
+   readable. This is the false-positive check.
 
 ## Limits
 
@@ -237,7 +263,7 @@ looked the same. It was found a day later.
 ### What breaks on an iOS update
 
 Here is everything the package touches, split by whether Apple documents it. The
-documented half is stable. The other half is seven strings, and any of them can change
+documented half is stable. The other half is eight strings, and any of them can change
 without warning.
 
 ```mermaid
@@ -246,6 +272,7 @@ flowchart TB
         D1["UIScreen.isCaptured<br/>capturedDidChangeNotification"]
         D2["UIApplication.applicationState<br/>lifecycle notifications"]
         D3["notify_register_dispatch()<br/>notify_get_state()"]
+        D5["GCMouse.mice()<br/>GCMouseDidConnect/Disconnect"]
         D4["UIView.alpha · CALayer.mask<br/>SwiftUI .mask + .luminanceToAlpha"]
     end
 
@@ -253,25 +280,25 @@ flowchart TB
         subgraph A["CaptureGuard"]
             U1["'LayoutCanvasView'<br/>Core/CALayer+HiddenOnCapture.swift:15"]
             U2["KVC key 'layer'<br/>Core/CALayer+HiddenOnCapture.swift:18,21"]
-            U3["'com.apple.iokit.hid.displayStatus'<br/>Monitor/CaptureMonitor.swift:51"]
+            U3["'com.apple.iokit.hid.displayStatus'<br/>Monitor/CaptureMonitor.swift:68"]
+            U7["'iPhone Mirroring' mouse name<br/>Monitor/CaptureMonitor.swift:113"]
         end
         subgraph B["CaptureGuardUIKit"]
             U4["'CAFilter'<br/>LayerFilterFactory.swift:16"]
             U5["'filterWithName:' + unsafeBitCast IMP<br/>LayerFilterFactory.swift:17,23"]
-            U6["'setFilters:'<br/>VisibleOnlyOnCaptureView.swift:31"]
+            U6["'setFilters:'<br/>VisibleOnlyOnCaptureView.swift:30"]
         end
     end
 
     classDef silent fill:#fff8c5,stroke:#9a6700,color:#24292f
     classDef raises fill:#ffebe9,stroke:#cf222e,color:#24292f
-    class U1,U2,U3,U4 silent
-    class U5,U6 raises
+    class U1,U2,U3,U4,U6,U7 silent
+    class U5 raises
 ```
 
 **Yellow** goes quiet: the lookup misses, the content stays visible, nothing is logged.
-**Red** throws an Objective-C exception instead. `setFilters:` is sent without a
-`responds(to:)` check, and the `unsafeBitCast` call assumes a function signature that
-nothing checks.
+**Red** throws an Objective-C exception instead. The `unsafeBitCast` call assumes a function
+signature that nothing checks.
 
 `LayerFilterFactory` is uneven about this. It guards the class and method *lookups* with
 `guard let`, but not the *call*. So a missing class is safe and a changed signature is not.
