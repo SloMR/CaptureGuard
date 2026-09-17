@@ -104,10 +104,8 @@ public final class CaptureMonitor: ObservableObject {
 	}
 
 	/// Set by recording, AirPlay and Mac-side screen recording. Not by iPhone Mirroring.
-	/// Asks every screen rather than picking one: `connectedScenes` is unordered, at
-	/// launch no scene is foregroundActive yet, and mirroring can add a screen.
 	private var isSystemCapturing: Bool {
-		windowScenes.contains { $0.screen.isCaptured }
+		screens.contains { $0.isCaptured }
 	}
 
 	private func looksLikeMirroring() -> Bool {
@@ -116,13 +114,19 @@ public final class CaptureMonitor: ObservableObject {
 		#else
 		guard isActive else { return false }
 		if let isDisplayOn = displayStatus?.state { return isDisplayOn == 0 }
-		return (activeScreen?.brightness ?? 1) <= 0.001
+		return activeScreen.brightness <= 0.001
 		#endif
 	}
 
-	private var activeScreen: UIScreen? {
+	/// One screen per connected scene, or the main screen when there are none.
+	private var screens: [UIScreen] {
+		let sceneScreens = windowScenes.map(\.screen)
+		return sceneScreens.isEmpty ? [UIScreen.main] : sceneScreens
+	}
+
+	private var activeScreen: UIScreen {
 		let scenes = windowScenes
-		return (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen
+		return (scenes.first { $0.activationState == .foregroundActive } ?? scenes.first)?.screen ?? UIScreen.main
 	}
 
 	private var windowScenes: [UIWindowScene] {
