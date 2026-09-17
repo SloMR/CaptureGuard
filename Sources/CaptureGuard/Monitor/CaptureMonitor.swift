@@ -28,7 +28,7 @@ public final class CaptureMonitor: ObservableObject {
 	}
 
 	private var observers: [NSObjectProtocol] = []
-	private let hiddenViews = NSHashTable<UIView>.weakObjects()
+	private let protectedViews = NSMapTable<UIView, NSNumber>.weakToStrongObjects()
 	private var hasSeenMirroring = false
 	private var isActive = true
 	private var displayStatus: DarwinNotification?
@@ -72,8 +72,9 @@ public final class CaptureMonitor: ObservableObject {
 	}
 
 	func hideWhileCapturing(_ view: UIView) {
-		hiddenViews.add(view)
-		view.alpha = isHidingContent ? 0 : 1
+		guard protectedViews.object(forKey: view) == nil else { return }
+		protectedViews.setObject(NSNumber(value: Double(view.alpha)), forKey: view)
+		if isHidingContent { view.alpha = 0 }
 	}
 
 	public func refresh() {
@@ -86,10 +87,19 @@ public final class CaptureMonitor: ObservableObject {
 		if capturing != isCapturing {
 			isCapturing = capturing
 		}
-		guard hiding != isHidingContent else { return }
+		let changed = hiding != isHidingContent
 		isHidingContent = hiding
-		for view in hiddenViews.allObjects {
-			view.alpha = hiding ? 0 : 1
+
+		guard hiding || changed else { return }
+		let views = protectedViews.keyEnumerator().allObjects.compactMap { $0 as? UIView }
+		for view in views {
+			if hiding {
+				guard view.alpha != 0 else { continue }
+				protectedViews.setObject(NSNumber(value: Double(view.alpha)), forKey: view)
+				view.alpha = 0
+			} else if view.alpha == 0, let alpha = protectedViews.object(forKey: view) {
+				view.alpha = CGFloat(alpha.doubleValue)
+			}
 		}
 	}
 
